@@ -26,9 +26,8 @@ interface Event4kApi {
 fun KClass<*>.extractQualifiedNameOrThrow() = simpleName
     ?: throw IllegalArgumentException("can't extract type qualified name, is it local, nested or anonymous? use direct key overload")
 
-suspend inline fun <reified Event> Event4kApi.publish(event: Event) {
+suspend inline fun <reified Event> Event4kApi.publish(event: Event) =
     this.publish(Event::class.extractQualifiedNameOrThrow(), event)
-}
 
 suspend inline fun <reified Event, OutPut> Event4kApi.register(noinline handler: Handler<Event, OutPut>): RegisterHook<OutPut> =
     this.register(Event::class.extractQualifiedNameOrThrow(), handler)

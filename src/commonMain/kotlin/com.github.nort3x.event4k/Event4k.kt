@@ -4,38 +4,31 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.internal.AtomicDesc
+import kotlinx.coroutines.internal.AtomicOp
 
+@Suppress("UNCHECKED_CAST")
 class Event4k : Event4kApi {
 
     private val scope = CoroutineScope(SupervisorJob())
-
-    private val bag: MutableMap<String, MutableMap<RegisterHook<Any?>, Handler<Any?, Any?>>> = mutableMapOf()
-    private val bagMutex = Mutex()
-
-    private suspend fun <T> acquireLockOfBagAndDo(f: () -> T): T {
-        bagMutex.lock()
-        val res = f()
-        bagMutex.unlock()
-        return res
-    }
+    private val concurrentBag = Event4kConcurrentBag()
+    private var idGen = 0
 
     override suspend fun <Event> publish(key: String, event: Event): Map<RegisterHook<*>, *> {
-        return acquireLockOfBagAndDo {
-            bag[key]?.let {
-                it.entries.map {
-                    scope.async {
-                        it.key to it.value(event, it.key)
+        return concurrentBag.computeFromKeyIfExist(key) {
+            it.entries.map {
+                scope.async {
+                    it.key to try {
+                        it.value.invoke(event, it.key)
+                    }catch (t: Throwable){
+                        t
                     }
                 }
             }
         }?.awaitAll()?.toMap() ?: emptyMap<RegisterHook<*>, Any?>()
     }
-
-    private var idGen = 0
     override suspend fun <Event, OutPut> register(key: String, handler: Handler<Event, OutPut>): RegisterHook<OutPut> {
-        return acquireLockOfBagAndDo {
-            val subBag = bag.getOrPut(key) { mutableMapOf() }
+        return concurrentBag.update(key) {
 
             val hook = RegisterHook<Any?>(key, idGen++)
 
@@ -46,18 +39,12 @@ class Event4k : Event4kApi {
             }
 
             hook.deRegisterHook = {
-                acquireLockOfBagAndDo {
-                    bag[key]?.let {
-                        it.remove(hook)
-                        if (it.isEmpty())
-                            bag.remove(key)
-                    }
-                }
+                concurrentBag.removeRegisterHook(key, hook)
             }
 
-            subBag[hook] = registration as Handler<Any?, Any?>
+            it[hook] = registration as Handler<Any?, Any?>
 
-            hook
+            it to hook
         } as RegisterHook<OutPut>
     }
 }

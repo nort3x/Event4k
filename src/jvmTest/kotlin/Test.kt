@@ -44,7 +44,7 @@ class Test {
     @Test
     fun `Consume Once Test`() = runBlocking {
 
-        var stealHook : RegisterHook<String>? = null
+        var stealHook: RegisterHook<String>? = null
 
         val j = launch {
             event4k.consumeOnce { event: String, hook: RegisterHook<String> ->
