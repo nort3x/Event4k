@@ -1,5 +1,8 @@
 package com.github.nort3x.event4k
 
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 actual class Event4kConcurrentBag {
@@ -32,6 +35,12 @@ actual class Event4kConcurrentBag {
                 null
             else v
         }
+    }
+
+
+    @OptIn(DelicateCoroutinesApi::class)
+    actual suspend fun removeAll(){
+        GlobalScope.launch { bag.clear() }.join()
     }
 
 }

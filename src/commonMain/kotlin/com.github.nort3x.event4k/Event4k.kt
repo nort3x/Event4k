@@ -1,50 +1,65 @@
 package com.github.nort3x.event4k
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.internal.AtomicDesc
-import kotlinx.coroutines.internal.AtomicOp
+import kotlin.reflect.KClass
 
 @Suppress("UNCHECKED_CAST")
-class Event4k : Event4kApi {
+interface Event4k {
+    suspend fun <Event> publish(key: String, event: Event): Map<RegisterHook<*>, *>
+    suspend fun <Event, OutPut> register(key: String, handler: EventHandler<Event, OutPut>): RegisterHook<OutPut>
 
-    private val scope = CoroutineScope(SupervisorJob())
-    private val concurrentBag = Event4kConcurrentBag()
-    private var idGen = 0
+    suspend fun clear()
+    suspend fun <Event, OutPut> registerAndIgnoreErrors(
+        key: String,
+        handler: Handler<Event, OutPut>
+    ): RegisterHook<OutPut> =
+        register(key, ErrorIgnoringEventHandler(handler))
 
-    override suspend fun <Event> publish(key: String, event: Event): Map<RegisterHook<*>, *> {
-        return concurrentBag.computeFromKeyIfExist(key) {
-            it.entries.map {
-                scope.async {
-                    it.key to try {
-                        it.value.invoke(event, it.key)
-                    }catch (t: Throwable){
-                        t
-                    }
-                }
+
+    /**
+     * consume a single event and deregister itself, pretty useless,
+     * there is no guarantee you receive the last event happening while this is being registered
+     */
+    suspend fun <Event, OutPut> consumeOnce(key: String, handler: EventHandler<Event, OutPut>): OutPut {
+        val hook = this.register(key, object : EventHandler<Event, OutPut> {
+            override suspend fun onEvent(e: Event, registerHook: RegisterHook<OutPut>): OutPut {
+                val res = handler.onEvent(e, registerHook)
+                registerHook.deRegister()
+                return res
             }
-        }?.awaitAll()?.toMap() ?: emptyMap<RegisterHook<*>, Any?>()
+
+            override suspend fun onError(e: Event, registerHook: RegisterHook<OutPut>, errorEvent: ErrorEvent) {
+                handler.onError(e, registerHook, errorEvent)
+            }
+        })
+        return hook.awaitNextInvoke().lastValue as OutPut
     }
-    override suspend fun <Event, OutPut> register(key: String, handler: Handler<Event, OutPut>): RegisterHook<OutPut> {
-        return concurrentBag.update(key) {
 
-            val hook = RegisterHook<Any?>(key, idGen++)
+    suspend fun <Event, OutPut> consumeOnceAndIgnoreErrors(key: String, handler: Handler<Event, OutPut>): OutPut =
+        consumeOnce(key, ErrorIgnoringEventHandler(handler))
 
-            val registration: Handler<Event, OutPut> = { event, registerHook ->
-                registerHook.numberOfInvokes++
-                registerHook.setLastValue(handler(event, registerHook))
-                registerHook.lastValue as OutPut
-            }
-
-            hook.deRegisterHook = {
-                concurrentBag.removeRegisterHook(key, hook)
-            }
-
-            it[hook] = registration as Handler<Any?, Any?>
-
-            it to hook
-        } as RegisterHook<OutPut>
+    companion object {
+        val default: Event4k by lazy(mode = LazyThreadSafetyMode.SYNCHRONIZED) { Event4kDefaultImpl() }
+        fun makeNewInstance(): Event4k = Event4kDefaultImpl()
     }
 }
+
+fun KClass<*>.extractQualifiedNameOrThrow() = simpleName
+    ?: throw IllegalArgumentException("can't extract type qualified name, is it local, nested or anonymous? use direct key overload")
+
+suspend inline fun <reified Event> Event4k.publish(event: Event) =
+    this.publish(Event::class.extractQualifiedNameOrThrow(), event)
+
+suspend inline fun <reified Event, OutPut> Event4k.register(handler: EventHandler<Event, OutPut>): RegisterHook<OutPut> =
+    this.register(Event::class.extractQualifiedNameOrThrow(), handler)
+suspend inline fun <reified Event, OutPut> Event4k.registerAndIgnoreErrors(noinline handler: Handler<Event, OutPut>): RegisterHook<OutPut> =
+    this.registerAndIgnoreErrors(Event::class.extractQualifiedNameOrThrow(),handler)
+
+/**
+ * consume a single event and deregister itself, pretty useless,
+ * there is no guarantee you receive the last event happening while this is being registered
+ */
+suspend inline fun <reified Event, OutPut> Event4k.consumeOnce(handler: EventHandler<Event, OutPut>): OutPut =
+    this.consumeOnce(Event::class.extractQualifiedNameOrThrow(), handler)
+
+suspend inline fun <reified Event, OutPut> Event4k.consumeOnceAndIgnoreErrors(noinline handler: Handler<Event, OutPut>): OutPut =
+    this.consumeOnceAndIgnoreErrors(Event::class.extractQualifiedNameOrThrow(), handler)

@@ -25,6 +25,9 @@ kotlin {
             commonWebpackConfig {
                 cssSupport.enabled = true
             }
+            testTask {
+                useMocha()
+            }
         }
     }
     val hostOs = System.getProperty("os.name")
@@ -46,13 +49,12 @@ kotlin {
         val commonTest by getting {
             dependencies {
                 implementation(kotlin("test"))
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.6.4")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.6.4")
             }
         }
         val jvmMain by getting
-        val jvmTest by getting
         val jsMain by getting
-        val jsTest by getting
         val nativeMain by getting
-        val nativeTest by getting
     }
 }

@@ -2,15 +2,16 @@ package com.github.nort3x.event4k
 
 import kotlinx.coroutines.sync.Mutex
 
-typealias BagValue = MutableMap<RegisterHook<Any?>, Handler<Any?, Any?>>
 expect class Event4kConcurrentBag constructor() {
     suspend fun <T> computeFromKeyIfExist(key: String, computer: (BagValue) -> T): T?
     suspend fun <T> update(key: String, computer: (BagValue) -> Pair<BagValue,T> ): T
 
     suspend fun removeRegisterHook(key: String, hook: RegisterHook<Any?>)
+
+    suspend fun removeAll()
 }
 
-internal class MultiPlatformEvent4kConcurrentBag{
+internal class MultiPlatformEvent4kMutexLockingConcurrentBag{
 
     private val bag: MutableMap<String, BagValue> = mutableMapOf()
     private val bagMutex = Mutex()
@@ -41,6 +42,12 @@ internal class MultiPlatformEvent4kConcurrentBag{
                 if (it.isEmpty())
                     bag.remove(key)
             }
+        }
+    }
+
+    suspend fun removeAll(){
+        acquireLockOfBagAndDo {
+            bag.clear()
         }
     }
 }
